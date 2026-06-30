@@ -1,0 +1,17 @@
+name = "telegram-gmail-bot"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cron: check for new emails every 2 minutes
+[triggers]
+crons = ["*/2 * * * *"]
+
+# KV namespace binding
+[[kv_namespaces]]
+binding = "EMAIL_BOT_KV"
+id = "4965136df5a64d39b02b12cac89455ac"
+
+# Environment variables (non-secret)
+[vars]
+ENVIRONMENT = "production"
