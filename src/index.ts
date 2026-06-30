@@ -23,6 +23,8 @@ import {
   trashMessage,
   sendRsvp,
   markAsRead,
+  getProfile,
+  getNewMessageIds,
 } from "./gmail";
 import { summarise } from "./summarizer";
 import {
@@ -31,6 +33,8 @@ import {
   clearState,
   saveEmailPage,
   getEmailPage,
+  getLastHistoryId,
+  setLastHistoryId,
 } from "./state";
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -683,62 +687,83 @@ async function handleCron(env: Env): Promise<void> {
 
   const token = env.TELEGRAM_BOT_TOKEN;
 
-  let emails: ParsedEmail[];
-  try {
-    emails = await fetchFull(env, "is:unread", 10);
-  } catch (err) {
-    console.error("Gmail fetch error during cron:", err);
+  // Step 1: Check if anything changed via historyId (lightweight call)
+  const lastHistoryId = await getLastHistoryId(env);
+
+  let newHistoryId: string;
+  let newMessageIds: string[];
+
+  if (lastHistoryId) {
+    // Compare historyId — skip entirely if nothing changed
+    const result = await getNewMessageIds(env, lastHistoryId);
+    newHistoryId = result.newHistoryId;
+    newMessageIds = result.messageIds;
+
+    if (newMessageIds.length === 0) {
+      console.log(`Cron: no changes (historyId ${lastHistoryId} → ${newHistoryId})`);
+      await setLastHistoryId(env, newHistoryId);
+      return;
+    }
+
+    console.log(`Cron: ${newMessageIds.length} new message(s) since historyId ${lastHistoryId}`);
+  } else {
+    // First run: get current profile to establish baseline
+    const profile = await getProfile(env);
+    newHistoryId = profile.historyId;
+    newMessageIds = [];
+
+    console.log(`Cron: first run, initialized historyId to ${newHistoryId}`);
+    await setLastHistoryId(env, newHistoryId);
     return;
   }
 
-  console.log(`Cron: found ${emails.length} unread emails`);
-
-  if (emails.length === 0) return;
-
-  // Send oldest first
-  emails.sort((a, b) => {
-    const da = new Date(a.date).getTime() || 0;
-    const db = new Date(b.date).getTime() || 0;
-    return da - db;
-  });
-
-  for (const em of emails) {
-    const summary = summarise(em.body || em.snippet);
-
-    let text =
-      `📧 <b>${esc(truncate(em.subject, 80))}</b>\n` +
-      `👤 ${esc(em.senderName)} &lt;${esc(em.senderEmail)}&gt;\n` +
-      `🕐 ${esc(em.date)}\n\n` +
-      `<b>Summary:</b>\n${esc(summary)}`;
-
-    let kb = actionKeyboard(em.id, em.isStarred, em.isImportant);
-
-    if (em.hasCalendar) {
-      const calText = formatCalendarDetails(em);
-      if (calText) {
-        text += `\n\n<b>📅 Calendar Invite:</b>\n${calText}`;
-      }
-      kb = {
-        inline_keyboard: [
-          ...kb.inline_keyboard,
-          [
-            { text: "✅ Accept", callback_data: `cal_accept:${em.id}` },
-            { text: "❌ Decline", callback_data: `cal_decline:${em.id}` },
-          ],
-        ],
-      };
-    }
-
+  // Step 2: Fetch full email data for each new message
+  for (const msgId of newMessageIds) {
     try {
-      await sendMessage(token, parseInt(chatId), text, kb);
-      console.log(`Notified: ${em.subject}`);
-    } catch (err) {
-      console.error("Telegram send error:", err);
-    }
+      const msg = await getMessage(env, msgId);
+      if (!msg) continue;
 
-    // Mark as read immediately so next cron won't pick it up
-    await markAsRead(env, em.id);
+      // Only notify about unread emails
+      if (!msg.body && !msg.snippet) continue;
+
+      const summary = summarise(msg.body || msg.snippet);
+
+      let text =
+        `📧 <b>${esc(truncate(msg.subject, 80))}</b>\n` +
+        `👤 ${esc(msg.senderName)} &lt;${esc(msg.senderEmail)}&gt;\n` +
+        `🕐 ${esc(msg.date)}\n\n` +
+        `<b>Summary:</b>\n${esc(summary)}`;
+
+      let kb = actionKeyboard(msg.id, msg.isStarred, msg.isImportant);
+
+      if (msg.hasCalendar) {
+        const calText = formatCalendarDetails(msg);
+        if (calText) {
+          text += `\n\n<b>📅 Calendar Invite:</b>\n${calText}`;
+        }
+        kb = {
+          inline_keyboard: [
+            ...kb.inline_keyboard,
+            [
+              { text: "✅ Accept", callback_data: `cal_accept:${msg.id}` },
+              { text: "❌ Decline", callback_data: `cal_decline:${msg.id}` },
+            ],
+          ],
+        };
+      }
+
+      await sendMessage(token, parseInt(chatId), text, kb);
+      console.log(`Notified: ${msg.subject}`);
+
+      // Mark as read after notifying
+      await markAsRead(env, msg.id);
+    } catch (err) {
+      console.error(`Failed to process message ${msgId}:`, err);
+    }
   }
+
+  // Step 3: Save the new historyId
+  await setLastHistoryId(env, newHistoryId);
 }
 
 // ── Worker entry point ─────────────────────────────────────────────────────

@@ -93,6 +93,30 @@ export interface GmailListResponse {
   resultSizeEstimate?: number;
 }
 
+export interface GmailProfile {
+  emailAddress: string;
+  historyId: string;
+  messagesTotal: number;
+  threadsTotal: number;
+}
+
+export interface GmailHistoryResponse {
+  historyId: string;
+  history?: GmailHistoryRecord[];
+}
+
+export interface GmailHistoryRecord {
+  id: string;
+  messages?: GmailHistoryMessage[];
+  messagesAdded?: { message: GmailMessage }[];
+}
+
+export interface GmailHistoryMessage {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+}
+
 // ── Parsed Email ───────────────────────────────────────────────────────────
 
 export interface ParsedEmail {

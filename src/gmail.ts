@@ -3,7 +3,7 @@
  * Uses OAuth2 with a refresh token to obtain short-lived access tokens.
  */
 
-import type { Env, GmailListResponse, GmailMessage, ParsedEmail } from "./types";
+import type { Env, GmailListResponse, GmailMessage, GmailProfile, GmailHistoryResponse, ParsedEmail } from "./types";
 import { extractCalendarDetails } from "./calendar";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1";
@@ -203,6 +203,49 @@ function parseMessage(msg: GmailMessage): ParsedEmail {
       description: "",
     },
   };
+}
+
+// ── History ID: lightweight change detection ────────────────────────────────
+
+/**
+ * Get the current Gmail profile with historyId.
+ * Single lightweight API call — no message data fetched.
+ */
+export async function getProfile(env: Env): Promise<GmailProfile> {
+  return gmailRequest<GmailProfile>(env, "/users/me/profile");
+}
+
+/**
+ * Fetch new messages added since a given historyId.
+ * Returns only message IDs of newly added messages (not full emails).
+ */
+export async function getNewMessageIds(
+  env: Env,
+  startHistoryId: string,
+): Promise<{ messageIds: string[]; newHistoryId: string }> {
+  const profile = await getProfile(env);
+
+  // If historyId hasn't changed, nothing new
+  if (profile.historyId === startHistoryId) {
+    return { messageIds: [], newHistoryId: profile.historyId };
+  }
+
+  const res = await gmailRequest<GmailHistoryResponse>(
+    env,
+    `/users/me/history?startHistoryId=${startHistoryId}&historyTypes=messageAdded&labelId=INBOX`,
+  );
+
+  const messageIds: string[] = [];
+  for (const record of res.history ?? []) {
+    for (const added of record.messagesAdded ?? []) {
+      // Only include messages that are still in INBOX
+      if (added.message.labelIds?.includes("INBOX")) {
+        messageIds.push(added.message.id);
+      }
+    }
+  }
+
+  return { messageIds, newHistoryId: res.historyId ?? profile.historyId };
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────

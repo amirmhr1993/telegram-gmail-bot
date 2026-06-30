@@ -83,3 +83,16 @@ export async function getLastCheckTs(env: Env): Promise<number> {
 export async function setLastCheckTs(env: Env, ts: number): Promise<void> {
   await env.EMAIL_BOT_KV.put(LAST_CHECK_KEY, String(ts));
 }
+
+// ── Gmail History ID ──────────────────────────────────────────────────────
+// Stores the last known Gmail historyId for change detection.
+
+const HISTORY_ID_KEY = "gmail_history_id";
+
+export async function getLastHistoryId(env: Env): Promise<string> {
+  return (await env.EMAIL_BOT_KV.get(HISTORY_ID_KEY)) ?? "";
+}
+
+export async function setLastHistoryId(env: Env, historyId: string): Promise<void> {
+  await env.EMAIL_BOT_KV.put(HISTORY_ID_KEY, historyId);
+}
